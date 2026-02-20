@@ -113,6 +113,9 @@
   font-size: 1rem;
   transition: all 0.3s ease;
   background: #fafafa;
+  color: #111827;
+  -webkit-text-fill-color: #111827;
+  caret-color: #111827;
   box-sizing: border-box;
 }
 
@@ -125,6 +128,13 @@
 
 .input-login::placeholder {
   color: #999;
+}
+
+.input-login:-webkit-autofill,
+.input-login:-webkit-autofill:hover,
+.input-login:-webkit-autofill:focus {
+  -webkit-text-fill-color: #111827;
+  transition: background-color 5000s ease-in-out 0s;
 }
 
 .btn-login {
@@ -192,6 +202,7 @@
 
   .login-card {
     padding: 2rem 1.5rem;
+    background: #ffffff;
   }
 
   .login-logo h1 {
@@ -200,6 +211,24 @@
 
   .login-header h2 {
     font-size: 1.5rem;
+    color: #111827;
+  }
+
+  .login-header p,
+  .form-group-login label,
+  .login-hint {
+    color: #374151;
+  }
+
+  .input-login {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #111827;
+    -webkit-text-fill-color: #111827;
+  }
+
+  .input-login::placeholder {
+    color: #6b7280;
   }
 }
 
