@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import Modal from '../components/Modal';
 import Cropper from 'react-easy-crop';
@@ -42,6 +42,7 @@ const ManagementAccount = () => {
     title: '',
     message: ''
   });
+  const bulkUserInputRef = useRef(null);
 
   useEffect(() => {
     fetchUsers();
@@ -468,6 +469,176 @@ const ManagementAccount = () => {
     showModalMessage('success', 'Berhasil', 'Site berhasil ditambahkan ke daftar.');
   };
 
+  const normalizeRole = (roleValue) => {
+    const normalized = (roleValue || '').toString().trim().toLowerCase();
+    if (!normalized) return 'User';
+    if (normalized === 'admin') return 'Admin';
+    if (normalized === 'trainer') return 'Trainer';
+    if (normalized === 'user') return 'User';
+    return null;
+  };
+
+  const downloadBulkUserTemplate = async () => {
+    try {
+      const XLSX = await import('xlsx');
+      const templateRows = [
+        {
+          nama: 'Budi Santoso',
+          jabatan: 'Supervisor Learning',
+          site: 'Balikpapan',
+          nrp: '12345678',
+          username: 'budi.santoso',
+          password: '123456',
+          role: 'User'
+        },
+        {
+          nama: 'Siti Rahma',
+          jabatan: 'Trainer',
+          site: 'Samarinda',
+          nrp: '87654321',
+          username: 'siti.rahma',
+          password: '123456',
+          role: 'Trainer'
+        }
+      ];
+
+      const instructionRows = [
+        { Ketentuan: 'Kolom wajib: nama, username, password. Kolom lain opsional.' },
+        { Ketentuan: 'Role hanya boleh: User, Trainer, Admin. Jika kosong akan otomatis User.' },
+        { Ketentuan: 'Username harus unik dan tidak boleh sama dengan user yang sudah ada.' },
+        { Ketentuan: 'Bulk upload tidak memerlukan foto. Foto dapat diedit setelah user dibuat.' }
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      const templateSheet = XLSX.utils.json_to_sheet(templateRows);
+      const instructionSheet = XLSX.utils.json_to_sheet(instructionRows);
+
+      XLSX.utils.book_append_sheet(workbook, templateSheet, 'Users');
+      XLSX.utils.book_append_sheet(workbook, instructionSheet, 'Instructions');
+      XLSX.writeFile(workbook, 'Template_Bulk_User.xlsx');
+    } catch (err) {
+      console.error('Error creating bulk template:', err);
+      showModalMessage('error', 'Error', 'Gagal membuat template bulk user.');
+    }
+  };
+
+  const triggerBulkUserUpload = () => {
+    if (bulkUserInputRef.current) {
+      bulkUserInputRef.current.value = '';
+      bulkUserInputRef.current.click();
+    }
+  };
+
+  const handleBulkUserUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsSubmitting(true);
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+
+      if (!worksheet) {
+        showModalMessage('error', 'Validasi Error', 'Sheet Excel tidak ditemukan.');
+        return;
+      }
+
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+      if (!rows.length) {
+        showModalMessage('error', 'Validasi Error', 'File kosong. Isi minimal 1 user.');
+        return;
+      }
+
+      const rowErrors = [];
+      const preparedUsers = rows.map((row, index) => {
+        const nama = (row.nama || row.Nama || row.name || row.Name || '').toString().trim();
+        const jabatan = (row.jabatan || row.Jabatan || row.position || row.Position || '').toString().trim();
+        const site = (row.site || row.Site || '').toString().trim();
+        const nrp = (row.nrp || row.NRP || '').toString().trim();
+        const username = (row.username || row.Username || '').toString().trim();
+        const password = (row.password || row.Password || '').toString();
+        const role = normalizeRole(row.role || row.Role);
+
+        if (!nama || !username || !password) {
+          rowErrors.push(`Baris ${index + 2}: nama, username, dan password wajib diisi.`);
+          return null;
+        }
+
+        if (!role) {
+          rowErrors.push(`Baris ${index + 2}: role tidak valid (gunakan User/Trainer/Admin).`);
+          return null;
+        }
+
+        return {
+          nama,
+          jabatan: jabatan || null,
+          site: site || null,
+          nrp: nrp || null,
+          username,
+          password,
+          role,
+          foto: null
+        };
+      }).filter(Boolean);
+
+      if (!preparedUsers.length) {
+        showModalMessage('error', 'Validasi Error', rowErrors.slice(0, 6).join('\n'));
+        return;
+      }
+
+      const usernameList = preparedUsers.map((u) => u.username.toLowerCase());
+      const duplicateInFile = usernameList.filter((item, idx) => usernameList.indexOf(item) !== idx);
+      if (duplicateInFile.length) {
+        const duplicates = [...new Set(duplicateInFile)].join(', ');
+        showModalMessage('error', 'Validasi Error', `Username duplikat di file: ${duplicates}`);
+        return;
+      }
+
+      const { data: existingUsers, error: checkError } = await supabase
+        .from('users')
+        .select('username')
+        .in('username', preparedUsers.map((u) => u.username));
+
+      if (checkError) {
+        showModalMessage('error', 'Error', 'Gagal memvalidasi username: ' + checkError.message);
+        return;
+      }
+
+      if (existingUsers && existingUsers.length > 0) {
+        const existingNames = existingUsers.map((u) => u.username).join(', ');
+        showModalMessage('error', 'Validasi Error', `Username sudah digunakan: ${existingNames}`);
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert(preparedUsers);
+
+      if (insertError) {
+        showModalMessage('error', 'Error', 'Gagal bulk upload user: ' + insertError.message);
+        return;
+      }
+
+      fetchUsers();
+      showModalMessage(
+        'success',
+        'Berhasil',
+        `Bulk upload berhasil. ${preparedUsers.length} user ditambahkan.${rowErrors.length ? `\nCatatan: ${rowErrors.length} baris dilewati karena tidak valid.` : ''}`
+      );
+    } catch (err) {
+      console.error('Error bulk upload user:', err);
+      showModalMessage('error', 'Error', 'Terjadi kesalahan saat memproses bulk upload user.');
+    } finally {
+      setIsSubmitting(false);
+      if (bulkUserInputRef.current) {
+        bulkUserInputRef.current.value = '';
+      }
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-content">
@@ -589,7 +760,7 @@ const ManagementAccount = () => {
 
         {activeTab === 'user' && (
           <>
-        <div className="account-actions">
+        <div className="account-actions" style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button 
             onClick={() => {
               if (showAddForm) {
@@ -602,6 +773,29 @@ const ManagementAccount = () => {
           >
             {showAddForm ? 'Batal' : '+ Tambah User'}
           </button>
+          <button
+            type="button"
+            onClick={downloadBulkUserTemplate}
+            className="btn-update-time"
+            disabled={isSubmitting}
+          >
+            Download Template User
+          </button>
+          <button
+            type="button"
+            onClick={triggerBulkUserUpload}
+            className="btn-update-time"
+            disabled={isSubmitting}
+          >
+            Upload Bulk User
+          </button>
+          <input
+            ref={bulkUserInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleBulkUserUpload}
+            style={{ display: 'none' }}
+          />
         </div>
 
         {showAddForm && (
