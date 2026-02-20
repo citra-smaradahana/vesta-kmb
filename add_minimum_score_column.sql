@@ -1,0 +1,3 @@
+ALTER TABLE public.quizzes 
+ADD COLUMN IF NOT EXISTS minimum_score INTEGER DEFAULT 70;
+
